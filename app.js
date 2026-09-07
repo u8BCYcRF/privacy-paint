@@ -248,17 +248,77 @@
     renderMosaicGroup([edit]);
   }
 
+  function blurPixels(pixels, radius) {
+    const { width, height, data } = pixels;
+    let source = new Float32Array(data.length);
+    let target = new Float32Array(data.length);
+
+    // Blur premultiplied colors so transparent pixels do not create dark fringes.
+    for (let index = 0; index < data.length; index += 4) {
+      const alpha = data[index + 3] / 255;
+      source[index] = data[index] * alpha;
+      source[index + 1] = data[index + 1] * alpha;
+      source[index + 2] = data[index + 2] * alpha;
+      source[index + 3] = data[index + 3];
+    }
+
+    // Three separable box passes approximate a Gaussian blur in linear time.
+    const diameter = radius * 2 + 1;
+    for (let pass = 0; pass < 6; pass++) {
+      const horizontal = pass % 2 === 0;
+      const length = horizontal ? width : height;
+      const lines = horizontal ? height : width;
+      const stride = horizontal ? 4 : width * 4;
+      const lineStride = horizontal ? width * 4 : 4;
+      for (let line = 0; line < lines; line++) {
+        for (let channel = 0; channel < 4; channel++) {
+          const start = line * lineStride + channel;
+          let sum = 0;
+          for (let offset = -radius; offset <= radius; offset++) {
+            sum += source[start + Math.max(0, Math.min(length - 1, offset)) * stride];
+          }
+          for (let position = 0; position < length; position++) {
+            target[start + position * stride] = sum / diameter;
+            const entering = Math.min(length - 1, position + radius + 1);
+            const leaving = Math.max(0, position - radius);
+            sum += source[start + entering * stride] - source[start + leaving * stride];
+          }
+        }
+      }
+      [source, target] = [target, source];
+    }
+
+    for (let index = 0; index < data.length; index += 4) {
+      const alpha = source[index + 3];
+      const scale = alpha > 0 ? 255 / alpha : 0;
+      data[index] = source[index] * scale;
+      data[index + 1] = source[index + 1] * scale;
+      data[index + 2] = source[index + 2] * scale;
+      data[index + 3] = alpha;
+    }
+    return pixels;
+  }
+
   function renderBlur(edit) {
-    const item = clippedBounds(getEditBounds(edit, edit.amount * 2));
+    const amount = Math.max(1, edit.amount);
+    const radius = Math.max(1, Math.round(amount));
+    const item = clippedBounds(getEditBounds(edit, radius * 3));
     if (item.w < 1 || item.h < 1) return;
     const effect = document.createElement("canvas");
     effect.width = item.w;
     effect.height = item.h;
     const effectCtx = effect.getContext("2d");
-    effectCtx.save();
-    effectCtx.filter = `blur(${Math.max(1, edit.amount)}px)`;
-    effectCtx.drawImage(canvas, -item.x, -item.y);
-    effectCtx.restore();
+    if ("filter" in effectCtx) {
+      effectCtx.save();
+      effectCtx.filter = `blur(${amount}px)`;
+      effectCtx.drawImage(canvas, -item.x, -item.y);
+      effectCtx.restore();
+    } else {
+      // Safari may not expose Canvas filters. Write blurred pixels to the canvas
+      // itself so the effect is also present in downloaded images.
+      const pixels = ctx.getImageData(item.x, item.y, item.w, item.h);
+      effectCtx.putImageData(blurPixels(pixels, radius), 0, 0);
+    }
     applyBrushMask(effectCtx, edit, item);
     ctx.drawImage(effect, item.x, item.y);
   }
