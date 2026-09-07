@@ -3,6 +3,8 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+  const MAX_IMAGE_WIDTH = 800;
+  const MAX_IMAGE_HEIGHT = 600;
 
   const canvas = $("#editorCanvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -384,7 +386,19 @@
   }
 
   function showEditor(image, name = "image") {
-    state.baseImage = image;
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const scale = Math.min(1, MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height);
+    const baseImage = document.createElement("canvas");
+    baseImage.width = Math.max(1, Math.round(width * scale));
+    baseImage.height = Math.max(1, Math.round(height * scale));
+    const baseCtx = baseImage.getContext("2d");
+    baseCtx.imageSmoothingEnabled = true;
+    baseCtx.imageSmoothingQuality = "high";
+    baseCtx.drawImage(image, 0, 0, baseImage.width, baseImage.height);
+
+    // Use the resized pixels for editing, mosaic sampling, and export alike.
+    state.baseImage = baseImage;
     state.fileName = name.replace(/\.[^.]+$/, "") || "image";
     state.edits = [];
     state.undoStack = [];
@@ -392,8 +406,8 @@
     state.mosaicLayers.clear();
     state.selectedId = null;
     state.nextId = 1;
-    canvas.width = image.naturalWidth || image.width;
-    canvas.height = image.naturalHeight || image.height;
+    canvas.width = baseImage.width;
+    canvas.height = baseImage.height;
     refs.emptyState.classList.add("hidden");
     refs.canvasStage.classList.remove("hidden");
     refs.workspaceStatus.classList.remove("hidden");
